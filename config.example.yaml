@@ -1,14 +1,64 @@
+# Copy to config.yaml and edit. Every password/token field accepts either a
+# literal string, "env:VAR_NAME", or (built with --features aws-secrets)
+# "aws-secret:<secret-id>#<json-field>".
+
 opcua:
   endpoint: "opc.tcp://localhost:4840"
+  security_policy: "None"       # or e.g. Basic256Sha256
+  security_mode: "None"         # None | Sign | SignAndEncrypt
+  # identity:                   # omit entirely to connect anonymously
+  #   username: "opcuser"
+  #   password: "env:OPCUA_PASSWORD"
   poll_interval_ms: 1000
-  subscriptions:
-    - node_id: "ns=2;s=Channel1.Device1.Tag1"
-      topic: "plant/line1/tag1"
-    - node_id: "ns=2;s=Channel1.Device1.Tag2"
-      topic: "plant/line1/tag2"
 
 mqtt:
   broker_host: "localhost"
   broker_port: 1883
   client_id: "opcua-to-mqtt"
-  qos: 0
+  # username: "mqttuser"
+  # password: "aws-secret:prod/mqtt#password"
+  tls:
+    enabled: false
+    # ca_cert: "/etc/opcua-to-mqtt/ca.pem"
+    # client_cert: "/etc/opcua-to-mqtt/client.pem"
+    # client_key: "/etc/opcua-to-mqtt/client-key.pem"
+
+# Each entry bridges one OPC UA node to one MQTT topic.
+# direction: read (OPC UA -> MQTT, default), write (MQTT -> OPC UA), or both.
+mappings:
+  - node_id: "ns=2;s=Channel1.Device1.Tag1"
+    topic: "plant/line1/tag1"
+    direction: read
+  - node_id: "ns=2;s=Channel1.Device1.SetPoint1"
+    topic: "plant/line1/setpoint1/set"
+    direction: write
+
+# Matched against the MQTT topic. Block always wins over allow; an empty
+# allow list means "allow everything not blocked".
+filters:
+  allow: []
+  block: []
+
+otel:
+  enabled: false
+  endpoint: "http://otel-collector:4317"
+  service_name: "opcua-to-mqtt"
+
+# Only used if built with --features influx.
+influx:
+  enabled: false
+  url: "http://influxdb:8086"
+  org: "myorg"
+  bucket: "opcua"
+  token: "aws-secret:prod/influx#token"
+
+# Only used if built with --features dashboard. Read-only status page, no
+# auth built in — keep this off a public network.
+dashboard:
+  enabled: false
+  bind: "127.0.0.1:8080"
+
+secrets:
+  aws:
+    enabled: false
+    region: "eu-west-1"
