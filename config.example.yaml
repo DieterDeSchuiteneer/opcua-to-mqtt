@@ -1,0 +1,14 @@
+opcua:
+  endpoint: "opc.tcp://localhost:4840"
+  poll_interval_ms: 1000
+  subscriptions:
+    - node_id: "ns=2;s=Channel1.Device1.Tag1"
+      topic: "plant/line1/tag1"
+    - node_id: "ns=2;s=Channel1.Device1.Tag2"
+      topic: "plant/line1/tag2"
+
+mqtt:
+  broker_host: "localhost"
+  broker_port: 1883
+  client_id: "opcua-to-mqtt"
+  qos: 0
