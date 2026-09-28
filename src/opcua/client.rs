@@ -26,6 +26,7 @@ pub struct ConnectedClient {
     // writes concurrently; adjust if `connect_to_matching_endpoint` returns
     // a bare `Session` once this is built against the real crate.
     session: Arc<Session>,
+    publishing_interval: Duration,
 }
 
 impl ConnectedClient {
@@ -70,7 +71,10 @@ impl ConnectedClient {
 
         tokio::spawn(event_loop.run());
 
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            publishing_interval: Duration::from_millis(cfg.poll_interval_ms as u64),
+        })
     }
 
     /// Subscribes to every given node id and forwards data changes onto
@@ -90,7 +94,7 @@ impl ConnectedClient {
         let subscription_id = self
             .session
             .create_subscription(
-                Duration::from_millis(1000),
+                self.publishing_interval,
                 10,
                 30,
                 0,
