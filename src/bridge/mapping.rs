@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use anyhow::{bail, Result};
 
-use crate::config::{Direction, FilterConfig, Mapping};
+use crate::config::{FilterConfig, Mapping};
 use crate::config::filter::TopicFilter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +60,7 @@ pub fn build(mappings: &[Mapping], filters: &FilterConfig) -> Result<MappingTabl
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Direction;
 
     fn mapping(node_id: &str, topic: &str, direction: Direction) -> Mapping {
         Mapping {

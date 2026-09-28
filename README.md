@@ -60,19 +60,23 @@ docker run -v $(pwd)/config.yaml:/config/config.yaml opcua-to-mqtt
 ## Test
 
 ```bash
-# unit tests (no external services)
+# unit tests + end-to-end scenarios; needs no external services
 docker build --target test .
-
-# + integration tests (needs a real MQTT broker; the OPC UA side of the
-# integration tests runs its own in-process test server, no extra service
-# needed for that half)
-docker compose -f docker-compose.test.yml up -d
-docker build --target test --build-arg RUN_IGNORED=1 --network=host .
-docker compose -f docker-compose.test.yml down
 ```
 
-Once a local Rust toolchain is available, the equivalent is `cargo test`
-(unit) / `cargo test -- --ignored` (+ integration, mosquitto running).
+Or, with a local Rust toolchain, `cargo test --all-features`.
+
+The end-to-end suite ([`tests/e2e.rs`](tests/e2e.rs)) runs the real bridge
+between an in-process mock OPC UA server and an in-process mock MQTT broker
+([`tests/support/`](tests/support)). Scenarios: read direction, write
+direction, `both` mappings, block list, allow list, env-secret resolution,
+bad-payload resilience, startup validation, and the dashboard. Not covered
+there: MQTT TLS, OPC UA message security, InfluxDB, OTLP export and AWS
+Secrets Manager, which each need their own mock infrastructure.
+
+`scripts/verify.sh` runs the whole suite in Docker and writes a report to
+`reports/latest.md` (see `CLAUDE.md` for the workflow). Docker Desktop needs
+at least ~6 GB of memory to compile the OPC UA crates.
 
 ## Licensing
 
