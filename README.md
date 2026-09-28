@@ -74,10 +74,9 @@ bad-payload resilience, startup validation, and the dashboard. Not covered
 there: MQTT TLS, OPC UA message security, InfluxDB, OTLP export and AWS
 Secrets Manager, which each need their own mock infrastructure.
 
-[`tests/bridge_it.rs`](tests/bridge_it.rs) is an older, narrower pair of
-`#[ignore]`d tests against a real Mosquitto
-(`docker compose -f docker-compose.test.yml up -d`, then
-`cargo test -- --ignored`); the e2e suite supersedes it.
+`scripts/verify.sh` runs the whole suite in Docker and writes a report to
+`reports/latest.md` (see `CLAUDE.md` for the workflow). Docker Desktop needs
+at least ~6 GB of memory to compile the OPC UA crates.
 
 ## Licensing
 

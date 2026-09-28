@@ -3,9 +3,13 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use opcua_client::prelude::*;
+use opcua_client::{ClientBuilder, DataChangeCallback, IdentityToken, MonitoredItem, Session};
+use opcua_types::{
+    AttributeId, DataValue, EndpointDescription, MessageSecurityMode, MonitoredItemCreateRequest,
+    NodeId, TimestampsToReturn, UserTokenPolicy, WriteValue,
+};
 use tokio::sync::mpsc;
 
 use crate::bridge::dispatch::{OpcUaChange, OpcUaWriter};
@@ -21,10 +25,6 @@ pub type OpcUaChangeSender = mpsc::Sender<OpcUaChange>;
 /// the bridge (dispatch, sinks, config) never touches `opcua_client` types
 /// directly — if this crate's API shifts, the fallout is contained here.
 pub struct ConnectedClient {
-    // Assumed to already be an `Arc<Session>` per async-opcua's design for
-    // sharing a session across the event loop task and callers issuing
-    // writes concurrently; adjust if `connect_to_matching_endpoint` returns
-    // a bare `Session` once this is built against the real crate.
     session: Arc<Session>,
     publishing_interval: Duration,
 }
@@ -42,17 +42,17 @@ impl ConnectedClient {
             .create_sample_keypair(true)
             .session_retry_limit(3)
             .client()
-            .ok_or_else(|| anyhow!("failed to build OPC UA client"))?;
+            .map_err(|errors| anyhow!("invalid OPC UA client configuration: {}", errors.join("; ")))?;
 
         let security_mode = match cfg.security_mode.as_str() {
             "None" => MessageSecurityMode::None,
             "Sign" => MessageSecurityMode::Sign,
             "SignAndEncrypt" => MessageSecurityMode::SignAndEncrypt,
-            other => anyhow::bail!("invalid opcua.security_mode: {other}"),
+            other => bail!("invalid opcua.security_mode: {other}"),
         };
 
         let identity_token = match (username, password) {
-            (Some(username), Some(password)) => IdentityToken::UserName(username, password),
+            (Some(username), Some(password)) => IdentityToken::new_user_name(username, password),
             _ => IdentityToken::Anonymous,
         };
 
@@ -69,7 +69,10 @@ impl ConnectedClient {
             .await
             .with_context(|| format!("connecting to OPC UA endpoint {}", cfg.endpoint))?;
 
-        tokio::spawn(event_loop.run());
+        event_loop.spawn();
+        if !session.wait_for_connection().await {
+            bail!("could not establish an OPC UA session with {}", cfg.endpoint);
+        }
 
         Ok(Self {
             session,
@@ -84,12 +87,13 @@ impl ConnectedClient {
             return Ok(());
         }
 
-        let node_by_handle: HashMap<u32, String> = node_ids
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (i as u32 + 1, n.clone()))
-            .collect();
-        let callback_handles = node_by_handle.clone();
+        let mut config_id_by_node: HashMap<NodeId, String> = HashMap::new();
+        for raw in node_ids {
+            let node_id =
+                NodeId::from_str(raw).map_err(|_| anyhow!("invalid node id: {raw}"))?;
+            config_id_by_node.insert(node_id, raw.clone());
+        }
+        let callback_lookup = config_id_by_node.clone();
 
         let subscription_id = self
             .session
@@ -100,53 +104,33 @@ impl ConnectedClient {
                 0,
                 0,
                 true,
-                DataChangeCallback::new(move |items: Vec<MonitoredItemHandle>| {
-                    for item in items {
-                        let Some(node_id) = callback_handles.get(&item.client_handle) else {
-                            continue;
-                        };
-                        let Some(value) = item.value.value.as_ref() else {
-                            continue;
-                        };
-                        let change = OpcUaChange {
-                            node_id: node_id.clone(),
-                            value: variant_to_value(value),
-                        };
-                        if let Err(err) = sender.try_send(change) {
-                            tracing::warn!(%err, "dropped OPC UA change: channel full or closed");
-                        }
+                DataChangeCallback::new(move |data_value: DataValue, item: &MonitoredItem| {
+                    let Some(config_id) = callback_lookup.get(&item.item_to_monitor().node_id)
+                    else {
+                        return;
+                    };
+                    let Some(variant) = data_value.value.as_ref() else {
+                        return;
+                    };
+                    let change = OpcUaChange {
+                        node_id: config_id.clone(),
+                        value: variant_to_value(variant),
+                    };
+                    if let Err(err) = sender.try_send(change) {
+                        tracing::warn!(%err, "dropped OPC UA change: channel full or closed");
                     }
                 }),
             )
             .await
             .context("creating OPC UA subscription")?;
 
-        let items_to_create = node_by_handle
-            .iter()
-            .map(|(handle, node_id)| {
-                let node_id = NodeId::from_str(node_id)
-                    .map_err(|_| anyhow!("invalid node id: {node_id}"))?;
-                Ok(MonitoredItemCreateRequest {
-                    item_to_monitor: ReadValueId {
-                        node_id,
-                        attribute_id: AttributeId::Value as u32,
-                        index_range: UAString::null(),
-                        data_encoding: QualifiedName::null(),
-                    },
-                    monitoring_mode: MonitoringMode::Reporting,
-                    requested_parameters: MonitoringParameters {
-                        client_handle: *handle,
-                        sampling_interval: -1.0,
-                        filter: ExtensionObject::null(),
-                        queue_size: 1,
-                        discard_oldest: true,
-                    },
-                })
-            })
-            .collect::<Result<Vec<MonitoredItemCreateRequest>>>()?;
+        let items_to_create: Vec<MonitoredItemCreateRequest> = config_id_by_node
+            .keys()
+            .map(|node_id| node_id.clone().into())
+            .collect();
 
         self.session
-            .create_monitored_items(subscription_id, TimestampsToReturn::Both, &items_to_create)
+            .create_monitored_items(subscription_id, TimestampsToReturn::Both, items_to_create)
             .await
             .context("creating OPC UA monitored items")?;
 
@@ -166,8 +150,8 @@ impl OpcUaWriter for ConnectedClient {
         let write_value = WriteValue {
             node_id,
             attribute_id: AttributeId::Value as u32,
-            index_range: UAString::null(),
             value: DataValue::new_now(value_to_variant(value)),
+            ..Default::default()
         };
         let results = self
             .session
@@ -176,7 +160,7 @@ impl OpcUaWriter for ConnectedClient {
             .context("OPC UA write request failed")?;
         if let Some(status) = results.first() {
             if status.is_bad() {
-                anyhow::bail!("OPC UA write returned {status}");
+                bail!("OPC UA write returned {status}");
             }
         }
         Ok(())

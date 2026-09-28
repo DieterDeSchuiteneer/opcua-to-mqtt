@@ -1,4 +1,4 @@
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 
 /// Allow/block list matched against MQTT topics. Block always wins over
@@ -43,7 +43,8 @@ impl TopicFilter {
 fn build_globset(patterns: &[String]) -> anyhow::Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
-        builder.add(Glob::new(pattern)?);
+        // `*` stays within one topic level; only `**` crosses `/` (MQTT-style).
+        builder.add(GlobBuilder::new(pattern).literal_separator(true).build()?);
     }
     Ok(builder.build()?)
 }

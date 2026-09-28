@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use serde::de::{self, Deserializer};
+use serde::de::Deserializer;
 use serde::Deserialize;
 
 /// A config value that may be a literal, an environment variable reference,

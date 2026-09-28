@@ -10,26 +10,22 @@
 # mock OPC UA server and MQTT broker on loopback, so no external services are
 # needed:
 #   docker build --target test --progress=plain .
-# RUN_IGNORED=1 instead runs only the older `#[ignore]`d tests in
-# tests/bridge_it.rs, which need a real Mosquitto:
-#   docker compose -f docker-compose.test.yml up -d
-#   docker build --target test --build-arg RUN_IGNORED=1 --network=host .
 FROM rust:1-alpine AS test
 RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static protobuf-dev
 WORKDIR /src
 ARG FEATURES="aws-secrets,influx,dashboard"
-ARG RUN_IGNORED=""
+# Keep peak memory low: Docker Desktop defaults to ~2 GB and rustc gets
+# SIGKILLed (OOM) on the AWS/OPC UA crates with debuginfo and many parallel jobs.
+ENV CARGO_PROFILE_DEV_DEBUG=0 \
+    CARGO_PROFILE_TEST_DEBUG=0 \
+    CARGO_BUILD_JOBS=1
 COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
 COPY tests ./tests
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    if [ -n "$RUN_IGNORED" ]; then \
-      cargo test --features "${FEATURES}" -- --ignored; \
-    else \
-      cargo test --features "${FEATURES}"; \
-    fi
+    cargo test --features "${FEATURES}"
 
 # --- build: release binary ---------------------------------------------------
 FROM rust:1-alpine AS build

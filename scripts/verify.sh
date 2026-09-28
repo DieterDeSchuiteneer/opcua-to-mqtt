@@ -37,6 +37,10 @@ section() { # title, command...
        "uncommitted files: $(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
   echo "- Raw log: $log"
 
+  if grep -q 'signal: 9' "$log"; then
+    printf '\n## Likely cause: out of memory\n\nrustc was killed with SIGKILL (signal 9), i.e. the Docker VM ran out of\nmemory (currently %s bytes). Reduce CARGO_BUILD_JOBS in the Dockerfile test\nstage, or raise Docker Desktop / WSL2 memory (.wslconfig `memory=`).\n' \
+      "$(docker info --format '{{.MemTotal}}' 2>/dev/null)"
+  fi
   section "Compile errors" grep -E -A12 '^error(\[E[0-9]+\])?:' "$log"
   section "Test results" grep -E '^test .* \.\.\. |^test result:|^running [0-9]+ tests|Running (unittests|tests/)' "$log"
   section "Failure details" awk '/^failures:$/{p=1} p{print} /^test result:/{p=0}' "$log"
